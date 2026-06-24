@@ -1,10 +1,13 @@
-import { useState, useEffect, useRef } from 'react';
-import { Home as HomeIcon, Search as SearchIcon, ListMusic, UploadCloud as UploadIcon, Settings, Play, Pause, SkipForward, SkipBack, Shuffle, Repeat, Volume2, X, Music, Heart, AlignLeft } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Home as HomeIcon, Search as SearchIcon, ListMusic, UploadCloud as UploadIcon, Settings, Play, Pause, SkipForward, SkipBack, Shuffle, Repeat, Volume2, X, Music, Heart, AlignLeft, LogOut } from 'lucide-react';
 import Home from './components/Home';
 import Search from './components/Search';
 import Library from './components/Library';
 import Upload from './components/Upload';
 import Player from './components/Player';
+import Login from './components/Auth/Login';
+import Signup from './components/Auth/Signup';
+import { useAuth } from './utils/AuthContext';
 import { getAllTracks, deleteTrack } from './utils/indexedDb';
 import { playSynthTrack, stopSynthTrack, setSynthVolume, getMasterAnalyser, getAudioContext } from './utils/humanSynth';
 
@@ -70,6 +73,9 @@ const DEFAULT_TRACKS = [
 ];
 
 function App() {
+  const { user, logout, loading } = useAuth();
+  const [authView, setAuthView] = useState('login'); // 'login' or 'signup'
+
   const [activeTab, setActiveTab] = useState('home');
   const [userTracks, setUserTracks] = useState([]);
   const [currentTrack, setCurrentTrack] = useState(null);
@@ -114,7 +120,7 @@ function App() {
     }
   }, []);
 
-  const setupAudioRouting = () => {
+  const setupAudioRouting = useCallback(() => {
     const ctx = getAudioContext();
     const analyser = getMasterAnalyser();
     analyserRef.current = analyser;
@@ -128,19 +134,19 @@ function App() {
         console.warn("Media source routing failed:", err);
       }
     }
-  };
+  }, []);
 
-  const handleTrackEnded = () => {
-    if (isRepeat) {
-      if (currentTrack) {
-        handlePlayTrack(currentTrack);
-      }
-      return;
+  const loadUserTracks = useCallback(async () => {
+    if (!user) return;
+    try {
+      const tracks = await getAllTracks(user.Id);
+      setUserTracks(tracks);
+    } catch (e) {
+      console.error("Error loading user tracks:", e);
     }
-    handleNextTrack();
-  };
+  }, [user]);
 
-  const handlePlayTrack = (track) => {
+  const handlePlayTrack = useCallback((track) => {
     setupAudioRouting();
 
     if (synthIntervalRef.current) {
@@ -165,8 +171,8 @@ function App() {
             if (isRepeat) {
               return 0;
             } else {
-              handleTrackEnded();
-              return 0;
+              // We'll handle Next later via useEffect or similar
+              return prev;
             }
           }
           return prev + 1;
@@ -187,9 +193,42 @@ function App() {
           });
       }
     }
-  };
+  }, [isRepeat, setupAudioRouting, volume]);
 
-  const handleTogglePlay = () => {
+  const handleNextTrack = useCallback(() => {
+    const queue = [...DEFAULT_TRACKS, ...userTracks];
+    if (queue.length === 0) return;
+
+    let nextIndex = 0;
+    if (isShuffle) {
+      nextIndex = Math.floor(Math.random() * queue.length);
+    } else if (currentTrack) {
+      const idx = queue.findIndex(t => t.id === currentTrack.id);
+      nextIndex = (idx + 1) % queue.length;
+    }
+    handlePlayTrack(queue[nextIndex]);
+  }, [currentTrack, isShuffle, userTracks, handlePlayTrack]);
+
+  const handlePrevTrack = useCallback(() => {
+    const queue = [...DEFAULT_TRACKS, ...userTracks];
+    if (queue.length === 0) return;
+
+    if (currentTime > 4) {
+      if (currentTrack) {
+        handlePlayTrack(currentTrack);
+      }
+      return;
+    }
+
+    let prevIndex = queue.length - 1;
+    if (currentTrack) {
+      const idx = queue.findIndex(t => t.id === currentTrack.id);
+      prevIndex = (idx - 1 + queue.length) % queue.length;
+    }
+    handlePlayTrack(queue[prevIndex]);
+  }, [currentTrack, currentTime, userTracks, handlePlayTrack]);
+
+  const handleTogglePlay = useCallback(() => {
     if (!currentTrack) return;
     setupAudioRouting();
 
@@ -214,9 +253,7 @@ function App() {
           setCurrentTime((prev) => {
             const limit = currentTrack.durationSec || 120;
             if (prev >= limit) {
-              if (isRepeat) return 0;
-              handleTrackEnded();
-              return 0;
+              return prev;
             }
             return prev + 1;
           });
@@ -226,40 +263,17 @@ function App() {
       }
       setIsPlaying(true);
     }
-  };
+  }, [currentTrack, isPlaying, setupAudioRouting, volume]);
 
-  const handleNextTrack = () => {
-    const queue = [...DEFAULT_TRACKS, ...userTracks];
-    if (queue.length === 0) return;
-
-    let nextIndex = 0;
-    if (isShuffle) {
-      nextIndex = Math.floor(Math.random() * queue.length);
-    } else if (currentTrack) {
-      const idx = queue.findIndex(t => t.id === currentTrack.id);
-      nextIndex = (idx + 1) % queue.length;
-    }
-    handlePlayTrack(queue[nextIndex]);
-  };
-
-  const handlePrevTrack = () => {
-    const queue = [...DEFAULT_TRACKS, ...userTracks];
-    if (queue.length === 0) return;
-
-    if (currentTime > 4) {
+  const handleTrackEnded = useCallback(() => {
+    if (isRepeat) {
       if (currentTrack) {
         handlePlayTrack(currentTrack);
       }
       return;
     }
-
-    let prevIndex = queue.length - 1;
-    if (currentTrack) {
-      const idx = queue.findIndex(t => t.id === currentTrack.id);
-      prevIndex = (idx - 1 + queue.length) % queue.length;
-    }
-    handlePlayTrack(queue[prevIndex]);
-  };
+    handleNextTrack();
+  }, [currentTrack, isRepeat, handleNextTrack, handlePlayTrack]);
 
   const handleSeek = (newTime) => {
     if (!currentTrack) return;
@@ -272,15 +286,6 @@ function App() {
         audioRef.current.currentTime = newTime;
       }
       setCurrentTime(newTime);
-    }
-  };
-
-  const loadUserTracks = async () => {
-    try {
-      const tracks = await getAllTracks();
-      setUserTracks(tracks);
-    } catch (e) {
-      console.error("Error loading user tracks:", e);
     }
   };
 
@@ -327,7 +332,7 @@ function App() {
 
   useEffect(() => {
     loadUserTracks();
-  }, []);
+  }, [loadUserTracks]);
 
   // Save interactive settings to localStorage
   useEffect(() => {
@@ -367,13 +372,7 @@ function App() {
       setSleepTimer((prev) => {
         if (prev && prev <= 1) {
           if (isPlaying) {
-            // Safe call toggle play
-            if (audioRef.current) audioRef.current.pause();
-            stopSynthTrack();
-            setIsPlaying(false);
-            if (synthIntervalRef.current) {
-              clearInterval(synthIntervalRef.current);
-            }
+            handleTogglePlay();
           }
           return null;
         }
@@ -382,7 +381,17 @@ function App() {
     }, 60000); // Decrease every minute
 
     return () => clearInterval(timer);
-  }, [sleepTimer, isPlaying]);
+  }, [sleepTimer, isPlaying, handleTogglePlay]);
+
+  // Handle synth end of track
+  useEffect(() => {
+    if (currentTrack && currentTrack.id.toString().startsWith('synth-')) {
+      const limit = currentTrack.durationSec || 120;
+      if (currentTime >= limit) {
+         handleTrackEnded();
+      }
+    }
+  }, [currentTime, currentTrack, handleTrackEnded]);
 
   // Audio element events
   useEffect(() => {
@@ -414,10 +423,22 @@ function App() {
       audio.removeEventListener('durationchange', handleDurationChange);
       audio.removeEventListener('ended', handleEnded);
     };
-  }, [currentTrack, isRepeat, isShuffle, userTracks]);
+  }, [currentTrack, handleTrackEnded]);
 
   const isCurrentTrackLiked = currentTrack && likedTrackIds.includes(currentTrack.id);
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  if (loading) {
+    return <div className="auth-container">Loading...</div>;
+  }
+
+  if (!user) {
+    return authView === 'login' ? (
+      <Login onToggle={() => setAuthView('signup')} />
+    ) : (
+      <Signup onToggle={() => setAuthView('login')} />
+    );
+  }
 
   return (
     <div className={`app-container ${getThemeClass()}`}>
@@ -471,6 +492,14 @@ function App() {
             >
               <Settings size={16} />
               <span>Settings</span>
+            </button>
+            <button
+              className="sidebar-nav-item"
+              onClick={logout}
+              style={{ color: '#ff4d4d' }}
+            >
+              <LogOut size={16} />
+              <span>Logout</span>
             </button>
           </div>
         </nav>
@@ -666,6 +695,14 @@ function App() {
           <button className="settings-btn" onClick={() => setIsSettingsOpen(false)}>
             <X size={20} />
           </button>
+        </div>
+
+        {/* User Info */}
+        <div className="settings-section">
+          <div className="settings-section-title">User Account</div>
+          <div style={{ fontSize: '13px', color: 'var(--text-primary)', marginBottom: '8px' }}>
+            {user?.email}
+          </div>
         </div>
 
         {/* Themes section */}

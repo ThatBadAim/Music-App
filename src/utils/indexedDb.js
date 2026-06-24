@@ -18,18 +18,20 @@ export const initDB = () => {
     request.onupgradeneeded = (event) => {
       const db = event.target.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+        store.createIndex('userId', 'userId', { unique: false });
       }
     };
   });
 };
 
-export const getAllTracks = async () => {
+export const getAllTracks = async (userId) => {
   const db = await initDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readonly');
     const store = transaction.objectStore(STORE_NAME);
-    const request = store.getAll();
+    const index = store.index('userId');
+    const request = index.getAll(userId);
 
     request.onsuccess = () => {
       resolve(request.result);
@@ -41,12 +43,12 @@ export const getAllTracks = async () => {
   });
 };
 
-export const addTrack = async (track) => {
+export const addTrack = async (track, userId) => {
   const db = await initDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
-    const request = store.add(track);
+    const request = store.add({ ...track, userId });
 
     request.onsuccess = () => {
       resolve(request.result);

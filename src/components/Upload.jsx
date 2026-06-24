@@ -1,8 +1,10 @@
 import { useState, useRef } from 'react';
 import { UploadCloud, Check, AlertTriangle } from 'lucide-react';
 import { addTrack } from '../utils/indexedDb';
+import { useAuth } from '../utils/AuthContext';
 
 const Upload = ({ onUploadSuccess, navigateToLibrary }) => {
+  const { user } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
   const [uploadState, setUploadState] = useState('idle'); // idle, processing, success, error
   const [progress, setProgress] = useState(0);
@@ -139,7 +141,7 @@ const Upload = ({ onUploadSuccess, navigateToLibrary }) => {
           timestamp: Date.now()
         };
 
-        await addTrack(trackData);
+        await addTrack(trackData, user.Id);
         setProgress(100);
         setUploadState('success');
 

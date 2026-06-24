@@ -29,3 +29,5 @@ wwwroot/
 *.sln
 *.sw?
 *.user
+
+app.db
